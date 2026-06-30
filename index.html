@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>楽譜入力アプリ</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #output {
+      margin-top: 40px;
+      overflow: hidden;
+      border-top: 4px solid #333;
+      height: 120px;
+      position: relative;
+      background: #f9f9f9;
+    }
+    .note {
+      position: absolute;
+      top: 30px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      border: 6px solid #000;
+      border-radius: 50%;
+      font-weight: bold;
+      font-size: 20px;
+      transition: background 0.3s;
+    }
+    .rest { background: transparent !important; border: none !important; }
+    .black-key { background: #fffacd !important; }
+  </style>
+</head>
+<body>
+
+<h2>楽譜を入力 (例: ド#高3 シ低♭2 休1)</h2>
+<input type="text" id="input" value="ド#高3 シ低♭2 休1" style="width: 500px; padding: 5px;">
+テンポ(BPM): <input type="number" id="bpm" value="100" style="width: 60px;">
+<button onclick="start()">再生</button>
+
+<div id="container" style="position: relative;">
+  <div id="judge-line" style="position:absolute; left:50px; top:30px; width:40px; height:80px; background:#00aaff; z-index:10;"></div>
+  <div id="output" style="margin-left: 50px;"></div>
+</div>
+
+<script>
+  // 音階（ドレミ）と周波数の対応表
+const frequencies = {
+  "ド": 261.63, "レ": 293.66, "ミ": 329.63, "ファ": 349.23,
+  "ソ": 392.00, "ラ": 440.00, "シ": 493.88
+};
+
+// 音を実際に鳴らす命令
+function playTone(el) {
+  const text = el.innerText;
+  let name = "";
+  if (text.includes("ド")) name = "ド";
+  else if (text.includes("レ")) name = "レ";
+  else if (text.includes("ミ")) name = "ミ";
+  else if (text.includes("ファ")) name = "ファ"; // これで「ファ」を見つけられます
+  else if (text.includes("ソ")) name = "ソ";
+  else if (text.includes("ラ")) name = "ラ";
+  else if (text.includes("シ")) name = "シ";
+  let freq = frequencies[name];
+  if (!freq) return;
+
+  // # と ♭ の計算（半音ずつずらす）
+  if (text.includes("#")) freq *= Math.pow(2, 1/12);
+  if (text.includes("♭")) freq /= Math.pow(2, 1/12);
+
+  // 高・低の計算（オクターブずらす）
+  if (el.style.color === "red") freq *= 2;   // 高音
+  if (el.style.color === "blue") freq /= 2;  // 低音
+
+  let osc = audioCtx.createOscillator();
+  let gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.frequency.value = freq;
+  
+  gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.5);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.5);
+}
+let bpm = 100;
+let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let intervalId = null; // クリック音のタイマー用
+let animationFrameId = null; // ★これが必要です！
+function playClick() {
+  let osc = audioCtx.createOscillator();
+  let gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.frequency.value = 880;
+  gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.1);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.1);
+}
+
+function start() {
+  if (animationFrameId) cancelAnimationFrame(animationFrameId); 
+
+  if (intervalId) clearInterval(intervalId);
+  bpm = parseInt(document.getElementById("bpm").value);
+  //intervalId = setInterval(playClick, (60 / bpm) * 1000);
+  
+  const output = document.getElementById("output");
+  output.innerHTML = "";
+  
+  const text = document.getElementById("input").value;
+  const regex = /(休)(\d+)|(ド|レ|ミ|ファ|ソ|ラ|シ)([#|♭|高|低]{0,4})(\d+)/g;
+  const borderColors = { "ド":"#ff0000", "レ":"#ffff00", "ミ":"#ffa500", "ファ":"#800080", "ソ":"#0000ff", "ラ":"#008000", "シ":"#ffc0cb" };
+  
+  let match;
+  let currentX = 500; 
+
+  while ((match = regex.exec(text)) !== null) {
+    const isRest = !!match[1];
+    const el = document.createElement("div");
+    el.className = "note" + (isRest ? " rest" : "");
+    const duration = parseInt(isRest ? match[2] : match[5]);
+    
+    if (!isRest) {
+      const name = match[3];
+      const modifiers = match[4];
+      el.style.borderColor = borderColors[name];
+      if (modifiers.includes("#") || modifiers.includes("♭")) el.className += " black-key";
+      if (modifiers.includes("低")) el.style.color = "blue";
+      if (modifiers.includes("高")) el.style.color = "red";
+      el.innerText = name + (modifiers.includes("#") ? "#" : modifiers.includes("♭") ? "♭" : "");
+    }
+    
+    el.style.width = (duration * 50) + "px";
+    el.style.left = currentX + "px";
+    output.appendChild(el);
+    currentX += (duration * 50) + 20; 
+  }
+  moveAll();
+}
+
+function moveAll() {
+  const speed = (bpm / 60) * (200 / 60);
+  const notes = document.querySelectorAll(".note");
+  notes.forEach(el => {
+    let left = parseFloat(el.style.left);
+    
+    // ライン通過時に音を鳴らす（休符は無視）
+    if (left > 50 && (left - speed) <= 50) {
+      if (!el.classList.contains("rest")) {
+        playTone(el); // el（音符の要素そのもの）を渡すのがポイント！
+      }
+    }
+
+    el.style.left = (left - speed) + "px";
+    if (left + el.offsetWidth < 50) el.remove();
+  });
+  
+  animationFrameId = requestAnimationFrame(moveAll);
+}
+</script>
+</body>
+</html>
